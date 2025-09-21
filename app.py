@@ -17,8 +17,7 @@ load_dotenv()
 st.set_page_config(
     page_title="Educational Image Analyzer",
     page_icon="📚",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # Custom CSS for better styling
@@ -91,6 +90,73 @@ def setup_groq_llm():
     except Exception as e:
         st.error(f"❌ Error initializing Groq LLM: {str(e)}")
         return None
+
+def hindi_summarization(image_files):
+    """Process uploaded images and generate educational summary"""
+    
+    # Setup LLM
+    llm = setup_groq_llm()
+    if not llm:
+        return None
+    
+    try:
+        # Load documents from images
+        docs = []
+        for image_file in image_files:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(image_file.name).suffix) as tmp_file:
+                tmp_file.write(image_file.getvalue())
+                tmp_file_path = tmp_file.name
+            
+            try:
+                loader = UnstructuredImageLoader(tmp_file_path)
+                docs.extend(loader.load())
+            finally:
+                # Clean up temporary file
+                os.unlink(tmp_file_path)
+        
+        if not docs:
+            st.error("❌ No text could be extracted from the uploaded images.")
+            return None
+        
+        # Split documents
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        texts = text_splitter.split_documents(docs)
+        
+        # Create prompts
+        chunk_prompt = """ 
+        Please summarize the below story 
+        Story: {text}
+        """
+        
+        chunk_prompt_template = PromptTemplate(input_variables=['text'], template=chunk_prompt)
+        
+        final_prompt = """ 
+        You are a teacher who is teaching a class of students.
+        You are given a story and you need to explain it to the students in hindi.
+        story: {text}
+        """
+        
+        final_prompt_template = PromptTemplate(input_variables=['text'], template=final_prompt)
+        
+        # Create and run summary chain
+        summary_chain = load_summarize_chain(
+            llm=llm,
+            chain_type="map_reduce",
+            map_prompt=chunk_prompt_template,
+            combine_prompt=final_prompt_template,
+            verbose=False
+        )
+        
+        # Run the chain
+        with st.spinner("🤖 AI is analyzing your images and generating educational content..."):
+            output = summary_chain.invoke({"input_documents": texts})
+        
+        return output.get('output_text', '')
+        
+    except Exception as e:
+        st.error(f"❌ Error processing images: {str(e)}")
+        return None
+
 
 def process_images(image_files):
     """Process uploaded images and generate educational summary"""
@@ -165,38 +231,7 @@ def main():
     # Header
     st.markdown('<h1 class="main-header">📚 Educational Image Analyzer</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Upload images containing text to generate educational summaries and analysis</p>', unsafe_allow_html=True)
-    
-    # Sidebar
-    with st.sidebar:
-        st.header("🔧 Configuration")
         
-        # API Key check
-        api_key = os.getenv("GROQ_API_KEY")
-        if api_key:
-            st.success("✅ GROQ API Key loaded")
-        else:
-            st.error("❌ GROQ API Key not found")
-            st.info("Please create a .env file with your GROQ_API_KEY")
-        
-        st.markdown("---")
-        st.header("📋 Instructions")
-        st.markdown("""
-        1. **Upload Images**: Select one or more images containing text
-        2. **Processing**: AI will extract and analyze the text
-        3. **Results**: View the educational summary and analysis
-        4. **Clear**: Use the clear button to start over
-        """)
-        
-        st.markdown("---")
-        st.header("ℹ️ About")
-        st.markdown("""
-        This application uses:
-        - **Unstructured**: For text extraction from images
-        - **LangChain**: For document processing
-        - **Groq**: For AI-powered analysis
-        - **Streamlit**: For the user interface
-        """)
-    
     # Main content area
     col1, col2 = st.columns([1, 1])
     
@@ -226,9 +261,11 @@ def main():
                 else:
                     # Process images
                     summary = process_images(uploaded_files)
+                    hindi_summary = hindi_summarization(uploaded_files)
                     
                     if summary:
                         st.session_state.processed_summary = summary
+                        st.session_state.hindi_summary = hindi_summary
                         st.session_state.uploaded_files = uploaded_files
                         st.session_state.processing_complete = True
                         st.success("✅ Processing completed successfully!")
@@ -244,16 +281,24 @@ def main():
             st.write(st.session_state.processed_summary)
             st.markdown('</div>', unsafe_allow_html=True)
             
+            st.markdown("---")
+
+            # Display the Hindi summary
+            st.markdown('<div class="summary-box">', unsafe_allow_html=True)
+            st.subheader("🎓 Educational Summary in Hindi")
+            st.write(st.session_state.hindi_summary)
+            st.markdown('</div>', unsafe_allow_html=True)
+
             # Additional options
             st.markdown("---")
             col_download, col_clear = st.columns(2)
             
             with col_download:
                 # Download summary as text file
-                summary_text = st.session_state.processed_summary
+                final_summary = st.session_state.processed_summary + st.session_state.hindi_summary
                 st.download_button(
                     label="💾 Download Summary",
-                    data=summary_text,
+                    data=final_summary,
                     file_name=f"educational_summary_{int(time.time())}.txt",
                     mime="text/plain",
                     use_container_width=True
@@ -271,13 +316,6 @@ def main():
         
         else:
             st.info("📤 Upload some images to get started!")
-    
-    # Footer
-    st.markdown("---")
-    st.markdown(
-        '<p style="text-align: center; color: #666;">Built with ❤️ using Streamlit, LangChain, and Groq AI</p>',
-        unsafe_allow_html=True
-    )
 
 if __name__ == "__main__":
     main()
