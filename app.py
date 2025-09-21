@@ -72,6 +72,8 @@ def initialize_session_state():
     """Initialize session state variables"""
     if 'processed_summary' not in st.session_state:
         st.session_state.processed_summary = None
+    if 'hindi_summary' not in st.session_state:
+        st.session_state.hindi_summary = None
     if 'uploaded_files' not in st.session_state:
         st.session_state.uploaded_files = []
     if 'processing_complete' not in st.session_state:
